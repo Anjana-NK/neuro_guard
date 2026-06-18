@@ -81,7 +81,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
     if (mounted) {
       final name = email.split('@')[0];
-      final profile = UserProfile()..name = name;
+      final profile = UserProfile()
+        ..name = name
+        ..email = email;
       Navigator.pushReplacementNamed(context, '/role-selection', arguments: profile);
     }
   }
@@ -94,7 +96,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     await Future.delayed(const Duration(milliseconds: 1500));
 
     if (mounted) {
-      final profile = UserProfile()..name = "Google User";
+      final profile = UserProfile()
+        ..name = "Google User"
+        ..email = "google.user@gmail.com";
       Navigator.pushReplacementNamed(context, '/role-selection', arguments: profile);
     }
   }

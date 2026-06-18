@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
 import '../models/user_profile.dart';
+import '../config.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -17,21 +18,36 @@ class _HistoryScreenState extends State<HistoryScreen> {
   List<dynamic> _historyList = [];
   bool _isLoading = true;
   String _errorMessage = "";
+  bool _isInitialized = false;
+  UserProfile? _userProfile;
 
   @override
   void initState() {
     super.initState();
-    _fetchHistory();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_isInitialized) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is UserProfile) {
+        _userProfile = args;
+      }
+      _fetchHistory();
+      _isInitialized = true;
+    }
   }
 
   Future<void> _fetchHistory() async {
-    String baseUrl = "http://localhost:5000";
-    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
-      baseUrl = "http://10.0.2.2:5000";
-    }
+    final baseUrl = AppConfig.getBaseUrl(context);
+    final email = _userProfile?.email ?? '';
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/history'));
+      final url = email.isNotEmpty
+          ? '$baseUrl/api/history?email=$email'
+          : '$baseUrl/api/history';
+      final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
         setState(() {
@@ -76,7 +92,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ..sensorySensitivity = pData['sensorySensitivity'] ?? 'None'
       ..incomeRange = pData['incomeRange'] ?? 'Below \u20b92.5L'
       ..targetedPath = pData['targetedPath'] ?? 'Academic grants'
-      ..insuranceNiramaya = pData['insuranceNiramaya'] ?? false;
+      ..insuranceNiramaya = pData['insuranceNiramaya'] ?? false
+      ..email = pData['email'] ?? '';
 
     final matchedData = item['result'] ?? {};
 

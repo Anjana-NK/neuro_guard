@@ -25,6 +25,7 @@ class UserProfile {
   String incomeRange = 'Below \u20b92.5L'; // Below \u20b92.5L, \u20b92.5L - \u20b98L, Above \u20b98L
   String targetedPath = 'Academic grants'; // Neurodivergent-friendly corporate jobs, vocational training, academic grants
   bool insuranceNiramaya = false;
+  String email = 'user@example.com';
 
   Map<String, dynamic> toJson() {
     return {
@@ -49,6 +50,7 @@ class UserProfile {
       'incomeRange': incomeRange,
       'targetedPath': targetedPath,
       'insuranceNiramaya': insuranceNiramaya,
+      'email': email,
     };
   }
 }

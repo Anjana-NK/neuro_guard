@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../theme.dart';
 import '../models/user_profile.dart';
+import '../config.dart';
 
 class IntakeFlowScreen extends StatefulWidget {
   const IntakeFlowScreen({super.key});
@@ -67,10 +68,7 @@ class _IntakeFlowScreenState extends State<IntakeFlowScreen> {
   // API Call helper
   Future<Map<String, dynamic>?> _submitProfileToBackend() async {
     // Determine Backend URL
-    String baseUrl = "http://localhost:5000";
-    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
-      baseUrl = "http://10.0.2.2:5000";
-    }
+    final baseUrl = AppConfig.getBaseUrl(context);
 
     try {
       print("Submitting profile to $baseUrl/api/match...");

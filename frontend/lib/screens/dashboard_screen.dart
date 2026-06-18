@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../models/user_profile.dart';
+import '../config.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -86,10 +87,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Future<void> _fetchNearbyCenters() async {
     setState(() => _isCentersLoading = true);
     
-    String baseUrl = "http://localhost:5000";
-    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
-      baseUrl = "http://10.0.2.2:5000";
-    }
+    final baseUrl = AppConfig.getBaseUrl(context);
 
     try {
       final response = await http.post(
@@ -124,10 +122,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       _ragSources = [];
     });
 
-    String baseUrl = "http://localhost:5000";
-    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
-      baseUrl = "http://10.0.2.2:5000";
-    }
+    final baseUrl = AppConfig.getBaseUrl(context);
 
     try {
       final response = await http.post(
@@ -161,10 +156,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   Future<void> _downloadPDFReport() async {
-    String baseUrl = "http://localhost:5000";
-    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
-      baseUrl = "http://10.0.2.2:5000";
-    }
+    final baseUrl = AppConfig.getBaseUrl(context);
 
     final queryParams = Uri(queryParameters: {
       'name': _profile.name,
@@ -228,10 +220,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       _actionTasks[idx]['status'] = status;
     });
 
-    String baseUrl = "http://localhost:5000";
-    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
-      baseUrl = "http://10.0.2.2:5000";
-    }
+    final baseUrl = AppConfig.getBaseUrl(context);
 
     try {
       // Re-submit updated checklist state to Firestore matching routes
@@ -334,7 +323,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             children: [
               IconButton(
                 icon: const Icon(Icons.history_rounded, color: Colors.white70),
-                onPressed: () => Navigator.pushNamed(context, '/history'),
+                onPressed: () => Navigator.pushNamed(context, '/history', arguments: _profile),
               ),
               IconButton(
                 icon: const Icon(Icons.notifications_none_rounded, color: Colors.white70),
@@ -1053,7 +1042,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ),
             icon: const Icon(Icons.history_rounded),
             label: const Text('VIEW ASSESSMENT TIMELINE HISTORY', style: TextStyle(fontWeight: FontWeight.bold)),
-            onPressed: () => Navigator.pushNamed(context, '/history'),
+            onPressed: () => Navigator.pushNamed(context, '/history', arguments: _profile),
           ),
           const SizedBox(height: 20),
 
