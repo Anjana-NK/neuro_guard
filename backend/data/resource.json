@@ -1,0 +1,32 @@
+[
+  {
+    "name": "National Institute of Speech and Hearing",
+    "state": "Kerala",
+    "category": "communication",
+    "website": "https://nish.ac.in"
+  },
+  {
+    "name": "Kerala Social Security Mission",
+    "state": "Kerala",
+    "category": "financial",
+    "website": "https://socialsecuritymission.gov.in"
+  },
+  {
+    "name": "National Trust",
+    "state": "India",
+    "category": "autism",
+    "website": "https://thenationaltrust.gov.in"
+  },
+  {
+    "name": "Skill India",
+    "state": "India",
+    "category": "employment",
+    "website": "https://skillindia.gov.in"
+  },
+  {
+    "name": "National Scholarship Portal",
+    "state": "India",
+    "category": "student",
+    "website": "https://scholarships.gov.in"
+  }
+]

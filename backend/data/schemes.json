@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Niramaya Health Insurance Scheme",
+    "category": "Health",
+    "state": "India",
+    "target": "autism",
+    "income": "all",
+    "website": "https://thenationaltrust.gov.in"
+  },
+  {
+    "name": "UDID Card",
+    "category": "Certification",
+    "state": "India",
+    "target": "autism",
+    "income": "all",
+    "website": "https://www.swavlambancard.gov.in"
+  },
+  {
+    "name": "National Scholarship for Students with Disabilities",
+    "category": "Education",
+    "state": "India",
+    "target": "student",
+    "income": "all",
+    "website": "https://scholarships.gov.in"
+  },
+  {
+    "name": "Skill India Vocational Support",
+    "category": "Employment",
+    "state": "India",
+    "target": "employment",
+    "income": "all",
+    "website": "https://www.skillindia.gov.in"
+  }
+]

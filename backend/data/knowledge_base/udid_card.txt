@@ -1,0 +1,26 @@
+# Swavlamban Card (UDID) application guidance
+
+The Unique Disability ID (UDID) card, also known as the Swavlamban Card, is a initiative by the Ministry of Social Justice and Empowerment, Government of India. It aims to build a national database for persons with disabilities (PwDs) and issue a single, verified card that serves as identification and eligibility verification for government schemes.
+
+## Eligibility
+- Autism Spectrum Disorder (ASD) is officially recognized under the Rights of Persons with Disabilities (RPwD) Act 2016.
+- Individuals diagnosed with Autism can apply for the UDID card, regardless of age.
+- Requires assessment and certification by a designated medical board.
+
+## How to Apply
+1. Register online at the official portal: swavlambancard.gov.in
+2. Fill out the application form with personal details, educational history, employment status, and disability details.
+3. Upload required documents:
+   - Recent passport-size photograph.
+   - Address proof (Aadhaar card, voter ID, passport, or utility bill).
+   - Identity proof (Aadhaar, PAN, etc.).
+   - Previous disability certificate (if already issued by a government hospital).
+4. Select the nearest government hospital/medical board for assessment.
+5. Visit the hospital on the scheduled date for physical/clinical assessment. The medical board consisting of psychiatrists, pediatricians, and clinical psychologists will verify the diagnosis and compute the disability percentage.
+6. Once approved, the UDID card and digital certificate can be downloaded online, and a physical card will be printed and couriered to the registered address.
+
+## Key Benefits
+- Simplifies access to federal and state disability pension grants.
+- Provides travel concessions in Indian Railways (up to 75% off for the cardholder and one escort) and state bus transport.
+- Simplifies applications for academic scholarships and vocational training support.
+- Accepted as valid proof of identity and disability across all government departments and institutions in India.

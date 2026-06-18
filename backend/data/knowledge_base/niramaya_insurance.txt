@@ -1,0 +1,31 @@
+# Niramaya Health Insurance Scheme Guidelines
+
+The Niramaya Health Insurance Scheme is a flagship program launched by the National Trust under the Ministry of Social Justice and Empowerment, Government of India. It offers health insurance cover to persons with Autism, Cerebral Palsy, Mental Retardation, and Multiple Disabilities.
+
+## Coverage Details
+- Provides comprehensive health insurance cover up to ₹1,00,000 (1 Lakh) per year.
+- Features a single premium rate across all age brackets.
+- Coverage includes:
+  - Surgery, hospitalization, and out-patient department (OPD) expenses.
+  - Corrective surgeries to address disability-related challenges.
+  - Therapy sessions including occupational therapy, physiotherapy, and speech therapy.
+  - Diagnostic tests and medical examinations.
+  - Alternative medicine (Ayush/Homeopathy) treatments.
+
+## Premium Slabs and Fees
+- **BPL (Below Poverty Line) / EWS (Income under ₹2,500 per month / ₹2.5L annually)**: Annual premium of ₹250.
+- **Non-BPL (Income above ₹2.5L)**: Annual premium of ₹500.
+- **No Income limits**: Anyone diagnosed with autism is eligible; there are no restrictive income ceilings to deny admission.
+- Premium is waived or fully reimbursed under certain state welfare structures (like Kerala Social Security Mission).
+
+## Required Documents for Registration
+1. Autism Diagnosis / Disability Certificate from a government medical board.
+2. Guard / Caregiver certificate (if applicant is minor or has severe intellectual disability).
+3. Aadhaar card of both the applicant and the caregiver.
+4. Income Certificate from a Revenue official (to qualify for the EWS/BPL slab).
+5. Bank Account Passbook (linked to the applicant or caregiver).
+
+## Claim Reimbursement Process
+1. Claim forms must be submitted along with original bills, medical recipes, prescriptions, and therapy certifications.
+2. Can be filed quarterly or annually at local registered service provider organizations (SNAC / local trust partners).
+3. Reimbursements are credited directly to the beneficiary's registered bank account.

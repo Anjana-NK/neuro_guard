@@ -1,5 +1,8 @@
-def match_profile(data):
+from services.scheme_service import match_schemes
+from services.ai_explanation_service import explain_matches
 
+def match_profile(data):
+    scheme_matches = match_schemes(data)
     role = data.get('role', 'I Need Support')
     name = data.get('name', 'User')
     autism_status = data.get('autismStatus', 'No')
@@ -246,23 +249,31 @@ def match_profile(data):
             "priority":
             "high"
         })
+    ai_explanation = explain_matches(
+    data,
+    scheme_matches
+    )
 
     return {
-        "status": "success",
+    "status": "success",
 
-        "profileSummary": {
-            "name": name,
-            "role": role,
-            "autismStatus": autism_status,
-            "sensorySensitivity":
-            sensory_sensitivity,
-            "location":
-            f"{state} (Pincode: {pincode})"
-        },
+    "profileSummary": {
+        "name": name,
+        "role": role,
+        "autismStatus": autism_status,
+        "sensorySensitivity":
+        sensory_sensitivity,
+        "location":
+        f"{state} (Pincode: {pincode})"
+    },
 
-        "benefits": benefits,
+    "benefits": benefits,
 
-        "resources": resources,
+    "schemeMatches": scheme_matches,
 
-        "actionPlan": action_plan
-    }
+    "resources": resources,
+
+    "actionPlan": action_plan,
+
+    "aiExplanation": ai_explanation,
+}
