@@ -1613,8 +1613,11 @@ class _VoiceAssistantDrawerState extends State<VoiceAssistantDrawer> with Single
                 return Padding(
                   padding: const EdgeInsets.only(right: 8.0),
                   child: ActionChip(
-                    backgroundColor: Colors.white.withOpacity(0.06),
-                    label: Text(suggestion, style: const TextStyle(fontSize: 12, fontFamily: 'serif', color: Colors.white70)),
+                    backgroundColor: const Color(0xFF203A43),
+                    surfaceTintColor: Colors.transparent,
+                    side: const BorderSide(color: CosmicTheme.accentTeal, width: 1.0),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    label: Text(suggestion, style: const TextStyle(fontSize: 12, fontFamily: 'serif', color: Colors.white)),
                     onPressed: () => _triggerCommand(suggestion),
                   ),
                 );
