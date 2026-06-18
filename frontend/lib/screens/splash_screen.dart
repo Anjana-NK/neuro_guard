@@ -29,7 +29,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
     // 3-second delay timer for navigation
     Timer(const Duration(seconds: 3), () {
-      Navigator.pushReplacementNamed(context, '/role-selection');
+      Navigator.pushReplacementNamed(context, '/login');
     });
   }
 

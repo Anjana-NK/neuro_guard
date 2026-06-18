@@ -1,5 +1,7 @@
 from services.scheme_service import match_schemes
 from services.ai_explanation_service import explain_matches
+from services.risk_prediction_service import predict_profile_risks
+from services.recommendation_service import find_similar_profiles
 
 def match_profile(data):
     scheme_matches = match_schemes(data)
@@ -254,6 +256,9 @@ def match_profile(data):
     scheme_matches
     )
 
+    risk_assessment = predict_profile_risks(data)
+    similar_recommendations = find_similar_profiles(data)
+
     return {
     "status": "success",
 
@@ -276,4 +281,8 @@ def match_profile(data):
     "actionPlan": action_plan,
 
     "aiExplanation": ai_explanation,
+    
+    "riskAssessment": risk_assessment,
+    
+    "similarRecommendations": similar_recommendations,
 }

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'theme.dart';
 import 'screens/splash_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/role_selection_screen.dart';
 import 'screens/intake_flow.dart';
 import 'screens/dashboard_screen.dart';
+import 'screens/history_screen.dart';
 
 void main() {
   runApp(const NeuroGuardApp());
@@ -21,9 +23,11 @@ class NeuroGuardApp extends StatelessWidget {
       initialRoute: '/',
       routes: {
         '/': (context) => const SplashScreen(),
+        '/login': (context) => const LoginScreen(),
         '/role-selection': (context) => const RoleSelectionScreen(),
         '/intake': (context) => const IntakeFlowScreen(),
         '/dashboard': (context) => const DashboardScreen(),
+        '/history': (context) => const HistoryScreen(),
       },
     );
   }

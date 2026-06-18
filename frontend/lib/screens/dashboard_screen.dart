@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../models/user_profile.dart';
 
@@ -13,19 +14,24 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
-  int _selectedTabIndex = 0; // 0: Home, 1: Resources, 2: Chat, 3: Profile
+class _DashboardScreenState extends State<DashboardScreen> with TickerProviderStateMixin {
+  int _selectedTabIndex = 0; // 0: Home, 1: Analysis, 2: RAG Search, 3: Centers, 4: Profile
   late UserProfile _profile;
   Map<String, dynamic>? _matchedData;
   bool _isInitialized = false;
 
-  // AI Assistant Chat State
-  final List<Map<String, String>> _chatMessages = [];
-  final TextEditingController _chatController = TextEditingController();
-  bool _isChatLoading = false;
-
-  // Action Plan Checklist State (local state copy of tasks)
+  // Checklist Roadmap State
   List<Map<String, dynamic>> _actionTasks = [];
+
+  // RAG Search State
+  final TextEditingController _ragSearchController = TextEditingController();
+  bool _isRagLoading = false;
+  String _ragAnswer = "";
+  List<dynamic> _ragSources = [];
+
+  // Nearby Centers State
+  List<dynamic> _nearbyCenters = [];
+  bool _isCentersLoading = true;
 
   @override
   void didChangeDependencies() {
@@ -41,7 +47,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _profile = UserProfile();
       }
 
-      // Initialize action plan checklist from matched data
+      // Sync/Initialize Action Checklist from matchedData
       if (_matchedData != null && _matchedData!['actionPlan'] != null) {
         final List originalTasks = _matchedData!['actionPlan'];
         _actionTasks = originalTasks.map((t) => Map<String, dynamic>.from(t)).toList();
@@ -62,11 +68,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ];
       }
 
-      // Default AI message
-      _chatMessages.add({
-        "sender": "ai",
-        "text": "Hello! I am your Neuro Guard Assistant. I've configured my responses with your profile (${_profile.name}, Sensory sensitivity: ${_profile.sensorySensitivity}). You can ask me details about the Niramaya Health Insurance Scheme, local state benefits, or how to seek accommodations."
-      });
+      // Fetch nearby centers
+      _fetchNearbyCenters();
 
       _isInitialized = true;
     }
@@ -74,19 +77,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
-    _chatController.dispose();
+    _ragSearchController.dispose();
     super.dispose();
   }
 
-  // AI Chat Request
-  Future<void> _sendChatMessage() async {
-    final query = _chatController.text.trim();
-    if (query.isEmpty) return;
+  // --- API Integrations ---
 
+  Future<void> _fetchNearbyCenters() async {
+    setState(() => _isCentersLoading = true);
+    
+    String baseUrl = "http://localhost:5000";
+    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
+      baseUrl = "http://10.0.2.2:5000";
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/centers/nearby'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'state': _profile.state,
+          'pincode': _profile.pincode
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        setState(() {
+          _nearbyCenters = body['centers'] ?? [];
+          _isCentersLoading = false;
+        });
+      } else {
+        setState(() => _isCentersLoading = false);
+      }
+    } catch (e) {
+      setState(() => _isCentersLoading = false);
+    }
+  }
+
+  Future<void> _queryRAG(String query) async {
+    if (query.trim().isEmpty) return;
+    
     setState(() {
-      _chatMessages.add({"sender": "user", "text": query});
-      _chatController.clear();
-      _isChatLoading = true;
+      _isRagLoading = true;
+      _ragAnswer = "";
+      _ragSources = [];
     });
 
     String baseUrl = "http://localhost:5000";
@@ -96,10 +131,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/api/chat'),
+        Uri.parse('$baseUrl/api/rag'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'message': query,
+          'query': query,
           'profile': _profile.toJson()
         }),
       );
@@ -107,21 +142,109 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
         setState(() {
-          _chatMessages.add({"sender": "ai", "text": body['reply'] ?? "I didn't understand that."});
+          _ragAnswer = body['answer'] ?? "No answer received.";
+          _ragSources = body['sources'] ?? [];
+          _isRagLoading = false;
         });
       } else {
         setState(() {
-          _chatMessages.add({"sender": "ai", "text": "Error communicating with intelligence server."});
+          _ragAnswer = "Error executing query. Status code: ${response.statusCode}";
+          _isRagLoading = false;
         });
       }
     } catch (e) {
       setState(() {
-        _chatMessages.add({"sender": "ai", "text": "Connection to AI server was lost. Please verify backend is running."});
+        _ragAnswer = "Failed to communicate with the Knowledge Base server.";
+        _isRagLoading = false;
       });
-    } finally {
-      setState(() {
-        _isChatLoading = false;
-      });
+    }
+  }
+
+  Future<void> _downloadPDFReport() async {
+    String baseUrl = "http://localhost:5000";
+    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
+      baseUrl = "http://10.0.2.2:5000";
+    }
+
+    final queryParams = Uri(queryParameters: {
+      'name': _profile.name,
+      'role': _profile.role,
+      'age': _profile.age,
+      'autismStatus': _profile.autismStatus,
+      'sensorySensitivity': _profile.sensorySensitivity,
+      'communicationMethod': _profile.communicationMethod,
+      'incomeRange': _profile.incomeRange,
+      'state': _profile.state,
+      'pincode': _profile.pincode,
+    }).query;
+
+    final downloadUrl = "$baseUrl/api/report/pdf?$queryParams";
+    final uri = Uri.parse(downloadUrl);
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not trigger PDF report download link.')),
+        );
+      }
+    }
+  }
+
+  // --- Voice Assistant Commands Action Parser ---
+  void _executeVoiceCommand(String rawCommand) {
+    final cmd = rawCommand.toLowerCase();
+    
+    // Switch tabs
+    if (cmd.contains("analysis") || cmd.contains("chart") || cmd.contains("അനാലിസിസ്") || cmd.contains("विश्लेषण") || cmd.contains("பகுப்பாய்வு")) {
+      setState(() => _selectedTabIndex = 1);
+    } else if (cmd.contains("search") || cmd.contains("scheme") || cmd.contains("തിരയുക") || cmd.contains("योजना") || cmd.contains("முகப்பு")) {
+      setState(() => _selectedTabIndex = 2);
+    } else if (cmd.contains("center") || cmd.contains("സ്ഥാപനങ്ങൾ") || cmd.contains("केंद्र") || cmd.contains("மையங்கள்")) {
+      setState(() => _selectedTabIndex = 3);
+    } else if (cmd.contains("profile") || cmd.contains("history") || cmd.contains("പ്രൊഫൈൽ") || cmd.contains("ഇതിഹാസം")) {
+      setState(() => _selectedTabIndex = 4);
+    } else if (cmd.contains("home") || cmd.contains("ഹോം") || cmd.contains("होम") || cmd.contains("முகப்பு")) {
+      setState(() => _selectedTabIndex = 0);
+    }
+
+    // Execute queries
+    if (cmd.contains("explain niramaya") || cmd.contains("നിരാമയ വിശദീകരിക്കുക") || cmd.contains("निरामय समझाएं") || cmd.contains("நிராமயா விளக்கு")) {
+      setState(() => _selectedTabIndex = 2);
+      _ragSearchController.text = "Explain Niramaya Health Insurance Scheme guidelines";
+      _queryRAG("Explain Niramaya Health Insurance Scheme guidelines");
+    } else if (cmd.contains("explain udid") || cmd.contains("സ്വവലംബൻ") || cmd.contains("यूडीआईडी")) {
+      setState(() => _selectedTabIndex = 2);
+      _ragSearchController.text = "How to apply for Swavlamban UDID card";
+      _queryRAG("How to apply for Swavlamban UDID card");
+    }
+  }
+
+  // --- Checklist state syncing back to Firestore ---
+  void _updateTaskStatusInFirestore(int idx, String status) async {
+    // Optimistic state updates
+    setState(() {
+      _actionTasks[idx]['status'] = status;
+    });
+
+    String baseUrl = "http://localhost:5000";
+    if (!kIsWeb && Theme.of(context).platform == TargetPlatform.android) {
+      baseUrl = "http://10.0.2.2:5000";
+    }
+
+    try {
+      // Re-submit updated checklist state to Firestore matching routes
+      await http.post(
+        Uri.parse('$baseUrl/api/match'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          ..._profile.toJson(),
+          'actionPlan': _actionTasks
+        }),
+      );
+    } catch (e) {
+      // Fail silently or log
     }
   }
 
@@ -132,6 +255,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     return Scaffold(
+      floatingActionButton: _buildGlobalVoiceAssistantFAB(),
       body: Container(
         decoration: BoxDecoration(
           gradient: CosmicTheme.cosmicGradient,
@@ -139,19 +263,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: SafeArea(
           child: Column(
             children: [
-              // Top Dashboard Header
+              // Header
               _buildDashboardHeader(),
               
-              // Dynamic Body depending on tab selection
+              // Dynamic Content Tab view
               Expanded(
                 child: _buildTabContent(),
               ),
 
-              // Amber-highlighted Responsible AI disclosure notice badge
-              if (_selectedTabIndex == 0 || _selectedTabIndex == 2)
-                _buildAIDisclosureBadge(),
+              // AI Badge Disclaimer
+              _buildAIDisclosureBadge(),
 
-              // Fixed dark bottom navigation dock
+              // Navigation Dock
               _buildBottomNavigationDock(),
             ],
           ),
@@ -160,62 +283,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- UI Component Builders ---
+  // --- Header & Layout builders ---
 
   Widget _buildDashboardHeader() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
             children: [
-              Text(
-                'Hello ${_profile.name.isNotEmpty ? _profile.name : 'User'} 👋',
-                style: GoogleFonts.italiana(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: CosmicTheme.accentTeal.withOpacity(0.2),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Image.asset(
+                    'assets/images/app_logo.png',
+                    errorBuilder: (c, e, s) => const Icon(Icons.security_rounded, color: CosmicTheme.accentTeal),
+                  ),
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                _profile.role == 'Caregiver' ? 'Caregiver Dashboard' : 'Self Assessment Plan',
-                style: const TextStyle(
-                  fontFamily: 'serif',
-                  color: Colors.white60,
-                  fontSize: 13,
-                ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Hello ${_profile.name.isNotEmpty ? _profile.name : 'User'} 👋',
+                    style: GoogleFonts.italiana(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _profile.role == 'Caregiver' ? 'Caregiver Dashboard' : 'Self Assessment Support',
+                    style: const TextStyle(
+                      fontFamily: 'serif',
+                      color: Colors.white60,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
           
-          // Notification shortcuts
-          Stack(
+          Row(
             children: [
               IconButton(
-                icon: const Icon(Icons.notifications_none_rounded, color: Colors.white, size: 28),
-                onPressed: () {
-                  // Show mock notification dialog
-                  _showMockNotifications();
-                },
+                icon: const Icon(Icons.history_rounded, color: Colors.white70),
+                onPressed: () => Navigator.pushNamed(context, '/history'),
               ),
-              Positioned(
-                right: 8,
-                top: 8,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: CosmicTheme.accentAmber,
-                    shape: BoxShape.circle,
-                  ),
-                  constraints: const BoxConstraints(
-                    minWidth: 10,
-                    minHeight: 10,
-                  ),
-                ),
-              )
+              IconButton(
+                icon: const Icon(Icons.notifications_none_rounded, color: Colors.white70),
+                onPressed: _showMockNotifications,
+              ),
             ],
           )
         ],
@@ -228,23 +352,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 0:
         return _buildHomeTab();
       case 1:
-        return _buildResourcesTab();
+        return _buildAnalysisTab();
       case 2:
-        return _buildChatTab();
+        return _buildRAGSearchTab();
       case 3:
+        return _buildNearbyCentersTab();
+      case 4:
         return _buildProfileTab();
       default:
         return _buildHomeTab();
     }
   }
 
-  // --- TAB 0: Home Dashboard ---
+  // ================= TAB 0: HOME DASHBOARD =================
   Widget _buildHomeTab() {
-    // Collect customized resources (filtered by sensory levels)
-    final listResources = _matchedData != null && _matchedData!['resources'] != null
-        ? (_matchedData!['resources'] as List)
+    final similarMatches = _matchedData != null && _matchedData!['similarRecommendations'] != null
+        ? (_matchedData!['similarRecommendations'] as List)
         : [];
-        
+
+    final aiExplanationText = _matchedData != null && _matchedData!['aiExplanation'] != null
+        ? _matchedData!['aiExplanation'] as String
+        : "Complete the intake flow to generate personalized recommendations.";
+
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24.0),
       child: Column(
@@ -252,58 +381,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
         children: [
           const SizedBox(height: 8),
           
-          // 4-Quadrant Grid Card Section
-          Text(
-            'Essential Tools',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 18),
-          ),
-          const SizedBox(height: 12),
+          // Essential Quick Grid
+          Text('Essential Services', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17)),
+          const SizedBox(height: 10),
           _build4QuadrantGrid(),
+          const SizedBox(height: 24),
           
-          const SizedBox(height: 28),
-          
-          // Sensory-Aligned Resources Feed Header
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Prioritized Accommodations',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 18),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: CosmicTheme.accentTeal.withOpacity(0.15),
-                  border: Border.all(color: CosmicTheme.accentTeal.withOpacity(0.4)),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  'Sensory: ${_profile.sensorySensitivity}',
-                  style: const TextStyle(
-                    color: CosmicTheme.accentTeal,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          
-          // Dynamic feed
-          if (listResources.isEmpty)
-            _buildFallbackResourceCard()
+          // Similar Profile Recommendations Panel
+          Text('Community Insights (Similar Profiles)', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17)),
+          const SizedBox(height: 10),
+          if (similarMatches.isEmpty)
+            _buildFallbackCard("No profile recommendations available.")
           else
-            ...listResources.map((res) {
-              return _buildResourceFeedCard(
-                title: res['title'] ?? 'Accommodation Scheme',
-                type: res['type'] ?? 'Support',
-                desc: res['description'] ?? '',
-                category: res['category'] ?? 'General',
-              );
+            ...similarMatches.map((item) {
+              return _buildSimilarProfileCard(item);
             }).toList(),
-            
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
+
+          // AI Explanation Narrative
+          Text('AI Explanation & Matching Insights', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17)),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.white.withOpacity(0.06), Colors.white.withOpacity(0.02)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              border: Border.all(color: CosmicTheme.accentTeal.withOpacity(0.2)),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: const [
+                    Icon(Icons.auto_awesome_rounded, color: CosmicTheme.accentTeal, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Decoded Schemes Summary',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontFamily: 'serif', fontSize: 14),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  aiExplanationText,
+                  style: const TextStyle(color: Colors.white70, height: 1.4, fontSize: 13, fontFamily: 'serif'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
         ],
       ),
     );
@@ -314,33 +444,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       crossAxisCount: 2,
-      crossAxisSpacing: 16,
-      mainAxisSpacing: 16,
-      childAspectRatio: 1.35,
+      crossAxisSpacing: 14,
+      mainAxisSpacing: 14,
+      childAspectRatio: 1.4,
       children: [
         _buildGridButton(
-          title: 'Eligibility',
-          icon: Icons.assignment_turned_in_rounded,
+          title: 'Analysis & Risks',
+          icon: Icons.analytics_outlined,
           color: const Color(0xFF4A90E2),
           onTap: () => setState(() => _selectedTabIndex = 1),
         ),
         _buildGridButton(
-          title: 'Resources',
-          icon: Icons.bubble_chart_rounded,
+          title: 'RAG Search',
+          icon: Icons.search_rounded,
           color: CosmicTheme.accentTeal,
-          onTap: () => setState(() => _selectedTabIndex = 1),
+          onTap: () => setState(() => _selectedTabIndex = 2),
         ),
         _buildGridButton(
-          title: 'Action Plan',
+          title: 'Action Roadmap',
           icon: Icons.checklist_rtl_rounded,
           color: CosmicTheme.accentAmber,
-          onTap: () => _showActionPlanModal(),
+          onTap: _showActionPlanModal,
         ),
         _buildGridButton(
-          title: 'AI Assistant',
-          icon: Icons.forum_rounded,
+          title: 'Support Centers',
+          icon: Icons.map_outlined,
           color: const Color(0xFF9B59B6),
-          onTap: () => setState(() => _selectedTabIndex = 2),
+          onTap: () => setState(() => _selectedTabIndex = 3),
         ),
       ],
     );
@@ -352,105 +482,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required Color color,
     required VoidCallback onTap,
   }) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            color: CosmicTheme.cardForeground.withOpacity(0.9),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black26,
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Icon(icon, color: color, size: 28),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.black87,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    fontFamily: 'serif',
-                  ),
-                ),
-              ],
-            ),
-          ),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white10),
         ),
-      ),
-    );
-  }
-
-  Widget _buildResourceFeedCard({
-    required String title,
-    required String type,
-    required String desc,
-    required String category,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
-        border: Border.all(color: Colors.white10),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(18.0),
+        padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: CosmicTheme.accentTeal.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    category.toUpperCase(),
-                    style: const TextStyle(
-                      color: CosmicTheme.accentTeal,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                Text(
-                  type,
-                  style: const TextStyle(color: Colors.white38, fontSize: 11, fontFamily: 'serif'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
+            Icon(icon, color: color, size: 28),
             Text(
               title,
               style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
                 color: Colors.white,
-                fontFamily: 'serif',
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              desc,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 13,
-                height: 1.3,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
                 fontFamily: 'serif',
               ),
             ),
@@ -460,240 +511,473 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildFallbackResourceCard() {
+  Widget _buildSimilarProfileCard(dynamic item) {
+    final name = item['anonymized_name'] ?? 'Peer';
+    final state = item['state'] ?? 'Kerala';
+    final sensory = item['sensory'] ?? 'None';
+    final schemes = (item['claimed_schemes'] as List?) ?? [];
+    final matchPct = item['similarity'] ?? '80%';
+
     return Container(
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
       ),
+      padding: const EdgeInsets.all(16),
       child: Column(
-        children: const [
-          Icon(Icons.spa_outlined, color: Colors.white30, size: 40),
-          SizedBox(height: 8),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                name,
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14, fontFamily: 'serif'),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: CosmicTheme.accentTeal.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'Match Similarity: $matchPct',
+                  style: const TextStyle(color: CosmicTheme.accentTeal, fontWeight: FontWeight.bold, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
           Text(
-            'No matching resources found. Review your filters in the Profile tab.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white54, fontFamily: 'serif'),
+            'Location: $state | Sensory sensitivity: $sensory',
+            style: const TextStyle(color: Colors.white38, fontSize: 12, fontFamily: 'serif'),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Acquired Schemes:',
+            style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'serif'),
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: schemes.map((s) {
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  s.toString(),
+                  style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'serif'),
+                ),
+              );
+            }).toList(),
           )
         ],
       ),
     );
   }
 
-  // --- TAB 1: Resources & Benefits ---
-  Widget _buildResourcesTab() {
-    final listBenefits = _matchedData != null && _matchedData!['benefits'] != null
-        ? (_matchedData!['benefits'] as List)
-        : [];
-    final listResources = _matchedData != null && _matchedData!['resources'] != null
-        ? (_matchedData!['resources'] as List)
-        : [];
+  // ================= TAB 1: ANALYSIS & RISKS =================
+  Widget _buildAnalysisTab() {
+    final riskData = _matchedData != null && _matchedData!['riskAssessment'] != null
+        ? _matchedData!['riskAssessment'] as Map<String, dynamic>
+        : {};
 
-    return DefaultTabController(
-      length: 2,
+    // Compute metrics
+    int sensoryVal = riskData['sensory_overload_risk'] != null ? riskData['sensory_overload_risk']['score'] : 10;
+    int commsVal = riskData['communication_barrier'] != null ? riskData['communication_barrier']['score'] : 15;
+    int stressVal = riskData['academic_workplace_stress'] != null ? riskData['academic_workplace_stress']['score'] : 20;
+    int finVal = riskData['financial_need'] != null ? riskData['financial_need']['score'] : 25;
+
+    int completedTasks = _actionTasks.where((t) => t['status'] == 'completed').length;
+    int totalTasks = _actionTasks.length;
+    double progressPct = totalTasks > 0 ? completedTasks / totalTasks : 0.0;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const TabBar(
-            indicatorColor: CosmicTheme.accentTeal,
-            tabs: [
-              Tab(text: 'Government Schemes'),
-              Tab(text: 'Accommodations'),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
+          // 1. Progress Tracker Chart
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Row(
               children: [
-                // Subtab 1: Schemes
-                ListView.builder(
-                  padding: const EdgeInsets.all(24.0),
-                  itemCount: listBenefits.length,
-                  itemBuilder: (ctx, index) {
-                    final item = listBenefits[index];
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: CosmicTheme.cardForeground,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 3))],
+                SizedBox(
+                  width: 90,
+                  height: 90,
+                  child: CustomPaint(
+                    painter: ProgressRingPainter(progressPct),
+                    child: Center(
+                      child: Text(
+                        '${(progressPct * 100).toInt()}%',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                       ),
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: CosmicTheme.gradientMid,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  item['badge'] ?? 'Scheme',
-                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                              Text(
-                                item['authority'] ?? '',
-                                style: const TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold),
-                              )
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            item['title'] ?? '',
-                            style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 18, fontFamily: 'serif'),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            item['description'] ?? '',
-                            style: const TextStyle(color: Colors.black54, fontSize: 13, height: 1.3, fontFamily: 'serif'),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
+                    ),
+                  ),
                 ),
-
-                // Subtab 2: Accommodations
-                ListView.builder(
-                  padding: const EdgeInsets.all(24.0),
-                  itemCount: listResources.length,
-                  itemBuilder: (ctx, index) {
-                    final item = listResources[index];
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.06),
-                        border: Border.all(color: Colors.white10),
-                        borderRadius: BorderRadius.circular(16),
+                const SizedBox(width: 24),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Roadmap Progress',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white, fontFamily: 'serif'),
                       ),
-                      padding: const EdgeInsets.all(18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                (item['category'] ?? 'Support').toString().toUpperCase(),
-                                style: const TextStyle(color: CosmicTheme.accentTeal, fontWeight: FontWeight.bold, fontSize: 11),
-                              ),
-                              Text(
-                                item['type'] ?? '',
-                                style: const TextStyle(color: Colors.white38, fontSize: 11, fontFamily: 'serif'),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            item['title'] ?? '',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, fontFamily: 'serif'),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            item['description'] ?? '',
-                            style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.3, fontFamily: 'serif'),
-                          ),
-                        ],
+                      const SizedBox(height: 4),
+                      Text(
+                        '$completedTasks of $totalTasks milestones complete.',
+                        style: const TextStyle(color: Colors.white54, fontSize: 13, fontFamily: 'serif'),
                       ),
-                    );
-                  },
-                ),
+                      const SizedBox(height: 10),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          backgroundColor: CosmicTheme.accentTeal.withOpacity(0.15),
+                          foregroundColor: CosmicTheme.accentTeal,
+                          side: const BorderSide(color: CosmicTheme.accentTeal),
+                        ),
+                        onPressed: _showActionPlanModal,
+                        child: const Text('MANAGE TASKS', style: TextStyle(fontSize: 12)),
+                      )
+                    ],
+                  ),
+                )
               ],
             ),
           ),
+          const SizedBox(height: 24),
+
+          // 2. Risk Prediction Radar/Bar Chart
+          Text('Risk & Challenge Assessment', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17)),
+          const SizedBox(height: 10),
+          Container(
+            height: 200,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: RiskBarChartPainter(
+                sensory: sensoryVal.toDouble(),
+                comms: commsVal.toDouble(),
+                stress: stressVal.toDouble(),
+                financial: finVal.toDouble(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // 3. AI Predictive Insight details
+          if (riskData.isNotEmpty)
+            ...riskData.entries.where((e) => e.key != 'summary').map((e) {
+              final title = e.key.replaceFirst('risk', '').replaceAll('_', ' ').trim().toUpperCase();
+              final score = e.value['score'] ?? 0;
+              final level = e.value['level'] ?? 'LOW';
+              final advice = e.value['advice'] ?? '';
+              
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white70, fontFamily: 'serif'),
+                        ),
+                        Text(
+                          '$score% ($level)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            color: level == 'HIGH' ? CosmicTheme.accentAmber : CosmicTheme.accentTeal,
+                          ),
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      advice,
+                      style: const TextStyle(color: Colors.white54, fontSize: 12, height: 1.3, fontFamily: 'serif'),
+                    ),
+                  ],
+                ),
+              );
+            }).toList()
         ],
       ),
     );
   }
 
-  // --- TAB 2: Chat Workspace ---
-  Widget _buildChatTab() {
-    return Column(
-      children: [
-        // Dialogue Stream
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(20),
-            itemCount: _chatMessages.length,
-            itemBuilder: (ctx, index) {
-              final msg = _chatMessages[index];
-              final isAi = msg['sender'] == 'ai';
-              return Align(
-                alignment: isAi ? Alignment.centerLeft : Alignment.centerRight,
-                child: Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  padding: const EdgeInsets.all(16),
-                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-                  decoration: BoxDecoration(
-                    color: isAi ? CosmicTheme.cardForeground : CosmicTheme.accentTeal.withOpacity(0.2),
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(16),
-                      topRight: const Radius.circular(16),
-                      bottomLeft: isAi ? Radius.zero : const Radius.circular(16),
-                      bottomRight: isAi ? const Radius.circular(16) : Radius.zero,
-                    ),
-                  ),
-                  child: Text(
-                    msg['text'] ?? '',
-                    style: TextStyle(
-                      color: isAi ? Colors.black87 : Colors.white,
-                      fontSize: 14,
-                      height: 1.3,
-                      fontFamily: 'serif',
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
+  // ================= TAB 2: RAG SEARCH & SCHEMES =================
+  Widget _buildRAGSearchTab() {
+    final benefits = _matchedData != null && _matchedData!['benefits'] != null
+        ? (_matchedData!['benefits'] as List)
+        : [];
 
-        if (_isChatLoading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8.0),
-            child: SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(CosmicTheme.accentTeal)),
-            ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // RAG Search Area
+          Text('RAG Support Knowledge Base', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17)),
+          const SizedBox(height: 8),
+          const Text(
+            'Ask queries about disability pensions, CBSE exam concessions, Niramaya insurance, or corporate rights.',
+            style: TextStyle(color: Colors.white54, fontSize: 12, fontFamily: 'serif'),
           ),
-
-        // Text Input Bar
-        Container(
-          padding: const EdgeInsets.all(16),
-          color: Colors.black26,
-          child: Row(
+          const SizedBox(height: 12),
+          Row(
             children: [
               Expanded(
                 child: TextField(
-                  controller: _chatController,
+                  controller: _ragSearchController,
                   style: const TextStyle(color: Colors.black87, fontFamily: 'serif'),
                   decoration: const InputDecoration(
-                    hintText: 'Ask about Niramaya or sensory plans...',
+                    hintText: 'e.g. CBSE extra time guidelines...',
                   ),
-                  onSubmitted: (_) => _sendChatMessage(),
                 ),
               ),
-              const SizedBox(width: 12),
-              CircleAvatar(
-                backgroundColor: CosmicTheme.accentTeal,
-                child: IconButton(
-                  icon: const Icon(Icons.send_rounded, color: Colors.white),
-                  onPressed: _sendChatMessage,
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => _queryRAG(_ragSearchController.text),
+                child: Container(
+                  height: 52,
+                  width: 52,
+                  decoration: BoxDecoration(
+                    color: CosmicTheme.accentTeal,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.search_rounded, color: Colors.white),
                 ),
-              )
+              ),
             ],
           ),
-        )
-      ],
+          const SizedBox(height: 16),
+
+          // RAG Output Card
+          if (_isRagLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16.0),
+                child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(CosmicTheme.accentTeal)),
+              ),
+            )
+          else if (_ragAnswer.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: const [
+                      Icon(Icons.auto_awesome_rounded, color: CosmicTheme.accentTeal, size: 20),
+                      SizedBox(width: 8),
+                      Text('AI Contextual Answer', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontFamily: 'serif')),
+                    ],
+                  ),
+                  const Divider(height: 24, color: Colors.white12),
+                  Text(
+                    _ragAnswer,
+                    style: const TextStyle(color: Colors.white70, height: 1.4, fontSize: 13, fontFamily: 'serif'),
+                  ),
+                  if (_ragSources.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      'Sources: ${_ragSources.join(", ")}',
+                      style: const TextStyle(color: CosmicTheme.accentAmber, fontStyle: FontStyle.italic, fontSize: 11, fontFamily: 'serif'),
+                    ),
+                  ]
+                ],
+              ),
+            ),
+          const SizedBox(height: 28),
+
+          // Core Schemes List
+          Text('Matched Support Schemes', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17)),
+          const SizedBox(height: 12),
+          if (benefits.isEmpty)
+            _buildFallbackCard("No matching schemes found.")
+          else
+            ...benefits.map((item) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.04),
+                  border: Border.all(color: Colors.white10),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: CosmicTheme.gradientMid,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            item['badge'] ?? 'Scheme',
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        Text(
+                          item['authority'] ?? '',
+                          style: const TextStyle(color: Colors.white38, fontSize: 11, fontFamily: 'serif'),
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      item['title'] ?? '',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15, fontFamily: 'serif'),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      item['description'] ?? '',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12, height: 1.3, fontFamily: 'serif'),
+                    ),
+                  ],
+                ),
+              );
+            }).toList()
+        ],
+      ),
     );
   }
 
-  // --- TAB 3: Profile Summary ---
+  // ================= TAB 3: NEARBY CENTERS =================
+  Widget _buildNearbyCentersTab() {
+    return _isCentersLoading
+        ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(CosmicTheme.accentTeal)))
+        : ListView.builder(
+            padding: const EdgeInsets.all(24),
+            itemCount: _nearbyCenters.length,
+            itemBuilder: (ctx, index) {
+              final center = _nearbyCenters[index];
+              final name = center['name'] ?? 'Support Center';
+              final city = center['city'] ?? '';
+              final state = center['state'] ?? '';
+              final address = center['address'] ?? '';
+              final phone = center['phone'] ?? '';
+              final web = center['website'] ?? '';
+              final services = (center['services'] as List?) ?? [];
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.04),
+                  border: Border.all(color: Colors.white10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white, fontFamily: 'serif'),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$city, $state',
+                      style: const TextStyle(color: CosmicTheme.accentTeal, fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'serif'),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      address,
+                      style: const TextStyle(color: Colors.white54, fontSize: 12, height: 1.3, fontFamily: 'serif'),
+                    ),
+                    const SizedBox(height: 12),
+                    if (phone.isNotEmpty || web.isNotEmpty)
+                      Row(
+                        children: [
+                          if (phone.isNotEmpty) ...[
+                            const Icon(Icons.phone_rounded, color: Colors.white38, size: 14),
+                            const SizedBox(width: 4),
+                            Text(phone, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                            const SizedBox(width: 16),
+                          ],
+                          if (web.isNotEmpty) ...[
+                            const Icon(Icons.language_rounded, color: Colors.white38, size: 14),
+                            const SizedBox(width: 4),
+                            GestureDetector(
+                              onTap: () async {
+                                final uri = Uri.parse(web);
+                                if (await canLaunchUrl(uri)) {
+                                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                }
+                              },
+                              child: Text(
+                                'Website',
+                                style: TextStyle(
+                                  color: Colors.blueAccent.shade100,
+                                  fontSize: 11,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                            ),
+                          ]
+                        ],
+                      ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: services.map((s) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            s.toString(),
+                            style: const TextStyle(color: Colors.white54, fontSize: 10),
+                          ),
+                        );
+                      }).toList(),
+                    )
+                  ],
+                ),
+              );
+            },
+          );
+  }
+
+  // ================= TAB 4: PROFILE & HISTORY =================
   Widget _buildProfileTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
@@ -701,11 +985,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
+              color: Colors.white.withOpacity(0.04),
               border: Border.all(color: Colors.white10),
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(24),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -717,40 +1001,71 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: Icon(Icons.person_rounded, size: 40, color: Colors.white),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 Center(
                   child: Text(
                     _profile.name,
-                    style: GoogleFonts.italiana(fontSize: 22, fontWeight: FontWeight.bold),
+                    style: GoogleFonts.italiana(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 ),
                 Center(
                   child: Text(
-                    'Role: ${_profile.role}',
+                    'Profile Role: ${_profile.role}',
                     style: const TextStyle(color: Colors.white54, fontFamily: 'serif'),
                   ),
                 ),
-                const Divider(height: 32, color: Colors.white12),
+                const Divider(height: 28, color: Colors.white12),
                 
-                _buildProfileRow('Age', _profile.age),
-                _buildProfileRow('Autism Status', _profile.autismStatus),
-                _buildProfileRow('State & Zip', '${_profile.state} (Pincode: ${_profile.pincode})'),
-                _buildProfileRow('Certificate', _profile.disabilityCertificate),
+                _buildProfileRow('Age Reference', _profile.age),
+                _buildProfileRow('Diagnosis Verified', _profile.autismStatus),
+                _buildProfileRow('State jurisdiction', _profile.state),
+                _buildProfileRow('Area Pincode', _profile.pincode),
+                _buildProfileRow('UDID Certificate', _profile.disabilityCertificate),
+                _buildProfileRow('Communication style', _profile.communicationMethod),
                 _buildProfileRow('Sensory Threshold', _profile.sensorySensitivity),
-                _buildProfileRow('Primary Comms', _profile.communicationMethod),
                 _buildProfileRow('Income Bracket', _profile.incomeRange),
-                _buildProfileRow('Insurance Opt-in', _profile.insuranceNiramaya ? 'Niramaya Scheme Selected' : 'Standard'),
               ],
             ),
           ),
-          const SizedBox(height: 30),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent.withOpacity(0.8), foregroundColor: Colors.white),
+          const SizedBox(height: 24),
+          
+          // Download report CTA
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: CosmicTheme.accentTeal,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 52),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            ),
+            icon: const Icon(Icons.picture_as_pdf_rounded),
+            label: const Text('DOWNLOAD PDF ASSESSMENT REPORT', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: _downloadPDFReport,
+          ),
+          const SizedBox(height: 14),
+
+          // Transition to history timeline
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white.withOpacity(0.08),
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 52),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            ),
+            icon: const Icon(Icons.history_rounded),
+            label: const Text('VIEW ASSESSMENT TIMELINE HISTORY', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () => Navigator.pushNamed(context, '/history'),
+          ),
+          const SizedBox(height: 20),
+
+          // Reroute back to Role Selection Screen
+          TextButton(
             onPressed: () {
-              // Reroute back to Role Selection Screen
               Navigator.pushNamedAndRemoveUntil(context, '/role-selection', (route) => false);
             },
-            child: const Text('RESET CONFIGURATION ENGINE', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
+            child: const Text(
+              'RESET CONFIGURATION ENGINE',
+              style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1, color: Colors.redAccent, decoration: TextDecoration.underline),
+            ),
           )
         ],
       ),
@@ -759,18 +1074,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildProfileRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      padding: const EdgeInsets.symmetric(vertical: 5.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.white38, fontFamily: 'serif')),
-          Text(value, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontFamily: 'serif')),
+          Text(label, style: const TextStyle(color: Colors.white38, fontFamily: 'serif', fontSize: 13)),
+          Text(value, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontFamily: 'serif', fontSize: 13)),
         ],
       ),
     );
   }
 
-  // --- ACTION PLAN MODAL SYSTEM ---
+  // ================= ACTION CHECKLIST ROADMAP SHEET =================
   void _showActionPlanModal() {
     showModalBottomSheet(
       context: context,
@@ -790,7 +1105,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               child: Column(
                 children: [
-                  // Modal drag indicator
                   Container(
                     margin: const EdgeInsets.symmetric(vertical: 12),
                     height: 4,
@@ -803,7 +1117,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Action Plan Roadmap', style: GoogleFonts.italiana(fontSize: 22, fontWeight: FontWeight.bold)),
+                        Text('Action Plan Roadmap', style: GoogleFonts.italiana(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
                         IconButton(
                           icon: const Icon(Icons.close, color: Colors.white),
                           onPressed: () => Navigator.pop(context),
@@ -816,14 +1130,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                   Expanded(
                     child: ListView.builder(
-                      padding: const EdgeInsets.all(24),
+                      padding: const EdgeInsets.all(20),
                       itemCount: _actionTasks.length,
                       itemBuilder: (c, idx) {
                         final task = _actionTasks[idx];
                         final isCompleted = task['status'] == 'completed';
                         
                         return Container(
-                          margin: const EdgeInsets.only(bottom: 16),
+                          margin: const EdgeInsets.only(bottom: 12),
                           decoration: BoxDecoration(
                             color: Colors.white.withOpacity(isCompleted ? 0.02 : 0.05),
                             borderRadius: BorderRadius.circular(16),
@@ -834,13 +1148,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             checkColor: Colors.black87,
                             value: isCompleted,
                             onChanged: (bool? val) {
-                              // Update modal AND local class state
+                              final newStatus = val! ? 'completed' : 'pending';
                               setModalState(() {
-                                _actionTasks[idx]['status'] = val! ? 'completed' : 'pending';
+                                _actionTasks[idx]['status'] = newStatus;
                               });
-                              setState(() {
-                                _actionTasks[idx]['status'] = val! ? 'completed' : 'pending';
-                              });
+                              _updateTaskStatusInFirestore(idx, newStatus);
                             },
                             title: Text(
                               task['task'] ?? '',
@@ -849,18 +1161,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 color: isCompleted ? Colors.white30 : Colors.white,
                                 fontWeight: FontWeight.bold,
                                 fontFamily: 'serif',
-                              ),
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 4.0),
-                              child: Text(
-                                task['details'] ?? '',
-                                style: TextStyle(
-                                  decoration: isCompleted ? TextDecoration.lineThrough : null,
-                                  color: isCompleted ? Colors.white24 : Colors.white60,
-                                  fontSize: 12,
-                                  fontFamily: 'serif',
-                                ),
+                                fontSize: 14,
                               ),
                             ),
                           ),
@@ -877,22 +1178,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- SUB UI ELEMENTS ---
+  // ================= MULTILINGUAL VOICE ASSISTANT OVERLAY =================
+  Widget _buildGlobalVoiceAssistantFAB() {
+    return FloatingActionButton(
+      backgroundColor: CosmicTheme.accentTeal,
+      child: const Icon(Icons.mic_none_rounded, color: Colors.white),
+      onPressed: () {
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (ctx) {
+            return const VoiceAssistantDrawer();
+          },
+        ).then((cmd) {
+          if (cmd is String && cmd.isNotEmpty) {
+            _executeVoiceCommand(cmd);
+          }
+        });
+      },
+    );
+  }
+
+  // ================= GENERAL WIDGETS =================
+  Widget _buildFallbackCard(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Center(
+        child: Text(
+          message,
+          style: const TextStyle(color: Colors.white30, fontFamily: 'serif', fontSize: 13),
+        ),
+      ),
+    );
+  }
 
   Widget _buildAIDisclosureBadge() {
     return Container(
       width: double.infinity,
-      color: CosmicTheme.accentAmber.withOpacity(0.15),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: CosmicTheme.accentAmber.withOpacity(0.12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: const [
-          Icon(Icons.info_outline_rounded, color: CosmicTheme.accentAmber, size: 18),
+          Icon(Icons.info_outline_rounded, color: CosmicTheme.accentAmber, size: 16),
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Responsible AI: Chat and accommodations are recommendations. Consult authorities or medical boards for official verifications.',
-              style: TextStyle(color: CosmicTheme.accentAmber, fontSize: 11, fontWeight: FontWeight.bold, fontFamily: 'serif'),
+              'Responsible AI: Information and charts are guide recommendations. Verify with clinicians.',
+              style: TextStyle(color: CosmicTheme.accentAmber, fontSize: 10, fontWeight: FontWeight.bold, fontFamily: 'serif'),
               textAlign: TextAlign.center,
             ),
           )
@@ -906,15 +1245,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       currentIndex: _selectedTabIndex,
       onTap: (index) => setState(() => _selectedTabIndex = index),
       type: BottomNavigationBarType.fixed,
-      backgroundColor: const Color(0xFF1B1D22), // Muted dark base bottom bar
+      backgroundColor: const Color(0xFF1B1D22),
       selectedItemColor: CosmicTheme.accentTeal,
       unselectedItemColor: Colors.white30,
-      selectedLabelStyle: const TextStyle(fontFamily: 'serif', fontWeight: FontWeight.bold),
-      unselectedLabelStyle: const TextStyle(fontFamily: 'serif'),
+      selectedLabelStyle: const TextStyle(fontFamily: 'serif', fontWeight: FontWeight.bold, fontSize: 10),
+      unselectedLabelStyle: const TextStyle(fontFamily: 'serif', fontSize: 10),
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.home_filled), label: 'Home'),
-        BottomNavigationBarItem(icon: Icon(Icons.assignment_rounded), label: 'Resources'),
-        BottomNavigationBarItem(icon: Icon(Icons.chat_bubble_rounded), label: 'Chat'),
+        BottomNavigationBarItem(icon: Icon(Icons.analytics_outlined), label: 'Analysis'),
+        BottomNavigationBarItem(icon: Icon(Icons.search_rounded), label: 'RAG Search'),
+        BottomNavigationBarItem(icon: Icon(Icons.location_on_outlined), label: 'Centers'),
         BottomNavigationBarItem(icon: Icon(Icons.account_circle_rounded), label: 'Profile'),
       ],
     );
@@ -930,15 +1270,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: const [
-            Text(
-              '• Niramaya scheme claims portal updated for 2026.',
-              style: TextStyle(color: Colors.white70, fontSize: 14, fontFamily: 'serif'),
-            ),
+            Text('• Niramaya scheme claims portal updated for 2026.', style: TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'serif')),
             SizedBox(height: 10),
-            Text(
-              '• Sensory adjustments active for your user profile.',
-              style: TextStyle(color: Colors.white70, fontSize: 14, fontFamily: 'serif'),
-            ),
+            Text('• Sensory adjustments active for your user profile.', style: TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'serif')),
           ],
         ),
         actions: [
@@ -946,6 +1280,358 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: const Text('DISMISS', style: TextStyle(color: CosmicTheme.accentTeal)),
             onPressed: () => Navigator.pop(ctx),
           )
+        ],
+      ),
+    );
+  }
+}
+
+// ================= CUSTOM PAINTERS =================
+
+class ProgressRingPainter extends CustomPainter {
+  final double progress;
+  ProgressRingPainter(this.progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 8;
+
+    final backgroundPaint = Paint()
+      ..color = Colors.white12
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8;
+
+    final activePaint = Paint()
+      ..color = CosmicTheme.accentTeal
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 8;
+
+    canvas.drawCircle(center, radius, backgroundPaint);
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -1.570796, // -90 degrees in radians
+      progress * 6.283185, // 360 degrees in radians
+      false,
+      activePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class RiskBarChartPainter extends CustomPainter {
+  final double sensory;
+  final double comms;
+  final double stress;
+  final double financial;
+
+  RiskBarChartPainter({
+    required this.sensory,
+    required this.comms,
+    required this.stress,
+    required this.financial,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double padding = 24.0;
+    final double graphHeight = size.height - 40;
+    final double barWidth = 32.0;
+    final double spacing = (size.width - (barWidth * 4) - (padding * 2)) / 3;
+
+    final labels = ["Sensory", "Comms", "Stress", "Financial"];
+    final values = [sensory, comms, stress, financial];
+
+    for (int i = 0; i < 4; i++) {
+      final double x = padding + (i * (barWidth + spacing));
+      final double barHeight = (values[i] / 100) * graphHeight;
+      final double y = size.height - barHeight - 20;
+
+      // Draw background track
+      final trackRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(x, 20, barWidth, graphHeight),
+        const Radius.circular(8),
+      );
+      canvas.drawRRect(trackRect, Paint()..color = Colors.white12);
+
+      // Draw glowing active bar
+      final activePaint = Paint()
+        ..shader = LinearGradient(
+          colors: [
+            values[i] > 70 ? CosmicTheme.accentAmber : CosmicTheme.accentTeal,
+            values[i] > 70 ? Colors.deepOrange : CosmicTheme.gradientBottom,
+          ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ).createShader(Rect.fromLTWH(x, y, barWidth, barHeight))
+        ..style = PaintingStyle.fill;
+
+      final barRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(x, y, barWidth, barHeight),
+        const Radius.circular(8),
+      );
+      canvas.drawRRect(barRect, activePaint);
+
+      // Draw Value Text
+      final valuePainter = TextPainter(
+        text: TextSpan(
+          text: '${values[i].toInt()}%',
+          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, fontFamily: 'serif'),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      valuePainter.paint(canvas, Offset(x + (barWidth - valuePainter.width) / 2, y - 14));
+
+      // Draw Label
+      final labelPainter = TextPainter(
+        text: TextSpan(
+          text: labels[i],
+          style: const TextStyle(color: Colors.white70, fontSize: 10, fontFamily: 'serif'),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      labelPainter.paint(canvas, Offset(x + (barWidth - labelPainter.width) / 2, size.height - 12));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// ================= VOICE ASSISTANT DRAWER COMPONENT =================
+
+class VoiceAssistantDrawer extends StatefulWidget {
+  const VoiceAssistantDrawer({super.key});
+
+  @override
+  State<VoiceAssistantDrawer> createState() => _VoiceAssistantDrawerState();
+}
+
+class _VoiceAssistantDrawerState extends State<VoiceAssistantDrawer> with SingleTickerProviderStateMixin {
+  String _activeLanguage = "English";
+  String _assistantStatus = "Listening...";
+  String _speechResult = "";
+  String _assistantReplyText = "";
+  bool _isSpeaking = false;
+  late AnimationController _waveformController;
+
+  @override
+  void initState() {
+    super.initState();
+    _waveformController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _waveformController.dispose();
+    super.dispose();
+  }
+
+  // Mock voice prompt mapping based on selected language
+  Map<String, List<String>> get _suggestions => {
+    "English": ["Show Analysis", "Show Nearby Centers", "Explain Niramaya", "Help"],
+    "Malayalam": ["അനാലിസിസ് കാണിക്കുക", "സ്ഥാപനങ്ങൾ കാണിക്കുക", "നിരാമയ വിശദീകരിക്കുക"],
+    "Hindi": ["विश्लेषण दिखाएं", "केंद्र दिखाएं", "निरामय समझाएं"],
+    "Tamil": ["பகுப்பாய்வு காட்டு", "மையங்களை காட்டு", "நிராமயா விளக்கு"]
+  };
+
+  void _triggerCommand(String text) async {
+    setState(() {
+      _speechResult = text;
+      _assistantStatus = "Processing...";
+    });
+
+    await Future.delayed(const Duration(milliseconds: 1000));
+
+    // Mock response generation based on language
+    String reply = "Analyzing command...";
+    if (_activeLanguage == "Malayalam") {
+      reply = "കമാൻഡ് സ്വീകരിച്ചു. ആവശ്യമുള്ള വിവരങ്ങൾ സ്ക്രീനിൽ കാണിക്കുന്നു.";
+    } else if (_activeLanguage == "Hindi") {
+      reply = "निर्देश स्वीकार किया गया। जानकारी दिखाई जा रही है।";
+    } else if (_activeLanguage == "Tamil") {
+      reply = "கட்டளை ஏற்றுக்கொள்ளப்பட்டது. விவரங்கள் திரையில் காட்டப்படும்.";
+    } else {
+      reply = "Command executed successfully. Navigating...";
+    }
+
+    if (text.toLowerCase().contains("niramaya") || text.contains("നിരാമയ") || text.contains("निरामय") || text.contains("நிராமயா")) {
+      reply += " RAG search triggered for Niramaya Scheme.";
+    }
+
+    setState(() {
+      _assistantReplyText = reply;
+      _assistantStatus = "Speaking...";
+      _isSpeaking = true;
+    });
+
+    // Simulate speech playback
+    await Future.delayed(const Duration(milliseconds: 2500));
+    
+    if (mounted) {
+      Navigator.pop(context, text); // Send command back to dashboard screen
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.6,
+      decoration: const BoxDecoration(
+        color: Color(0xFF1B1D22),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(28),
+          topRight: Radius.circular(28),
+        ),
+      ),
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              height: 4,
+              width: 40,
+              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Voice Assistant',
+                style: GoogleFonts.italiana(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              // Language Dropdown selector
+              DropdownButton<String>(
+                value: _activeLanguage,
+                dropdownColor: const Color(0xFF2C2F36),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                icon: const Icon(Icons.translate_rounded, color: CosmicTheme.accentTeal, size: 18),
+                underline: const SizedBox(),
+                items: ["English", "Malayalam", "Hindi", "Tamil"].map((l) {
+                  return DropdownMenuItem(value: l, child: Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: Text(l),
+                  ));
+                }).toList(),
+                onChanged: (val) {
+                  setState(() {
+                    _activeLanguage = val!;
+                    _assistantReplyText = "";
+                  });
+                },
+              )
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Glowing Waveform visual feedback
+          Container(
+            height: 80,
+            alignment: Alignment.center,
+            child: AnimatedBuilder(
+              animation: _waveformController,
+              builder: (ctx, child) {
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(10, (idx) {
+                    double height = 15.0 + (10 - idx).abs() * 3.0 * (1.0 + _waveformController.value);
+                    if (_isSpeaking) {
+                      height *= 0.5; // smaller spikes when speaking vs listening
+                    }
+                    return Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      width: 4,
+                      height: height % 50.0,
+                      decoration: BoxDecoration(
+                        color: _isSpeaking ? CosmicTheme.accentAmber : CosmicTheme.accentTeal,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    );
+                  }),
+                );
+              },
+            ),
+          ),
+          Center(
+            child: Text(
+              _assistantStatus,
+              style: TextStyle(
+                color: _isSpeaking ? CosmicTheme.accentAmber : CosmicTheme.accentTeal,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                letterSpacing: 1,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Speech Output
+          if (_speechResult.isNotEmpty)
+            Text(
+              'You said: "${_speechResult}"',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white54, fontStyle: FontStyle.italic, fontSize: 12, fontFamily: 'serif'),
+            ),
+          const SizedBox(height: 8),
+          if (_assistantReplyText.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.04),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _assistantReplyText,
+                style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.3, fontFamily: 'serif'),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          
+          const Spacer(),
+
+          // Chips selection suggestions
+          const Text(
+            'Quick Commands:',
+            style: TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: _suggestions[_activeLanguage]!.map((suggestion) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8.0),
+                  child: ActionChip(
+                    backgroundColor: Colors.white.withOpacity(0.06),
+                    label: Text(suggestion, style: const TextStyle(fontSize: 12, fontFamily: 'serif', color: Colors.white70)),
+                    onPressed: () => _triggerCommand(suggestion),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Keyboard fallback input bar
+          TextField(
+            style: const TextStyle(color: Colors.black87, fontFamily: 'serif'),
+            decoration: InputDecoration(
+              hintText: 'Type voice instruction / command...',
+              suffixIcon: const Icon(Icons.keyboard_rounded, color: Colors.black45),
+            ),
+            onSubmitted: _triggerCommand,
+          ),
         ],
       ),
     );
