@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import '../config.dart';
 import '../theme.dart';
 import '../models/user_profile.dart';
 
@@ -77,14 +80,74 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       _isLoading = true;
     });
 
-    await Future.delayed(const Duration(milliseconds: 1200));
+    final name = email.split('@')[0];
+    final profile = UserProfile()
+      ..name = name
+      ..email = email;
+
+    await _attemptProfileLogin(email, profile);
 
     if (mounted) {
-      final name = email.split('@')[0];
-      final profile = UserProfile()
-        ..name = name
-        ..email = email;
-      Navigator.pushReplacementNamed(context, '/role-selection', arguments: profile);
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _attemptProfileLogin(String email, UserProfile fallbackProfile) async {
+    final baseUrl = AppConfig.getBaseUrl(context);
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/api/history?email=$email'));
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final history = body['history'] as List?;
+        if (history != null && history.isNotEmpty) {
+          final latest = history[0];
+          final pData = latest['profile'] ?? {};
+          final profile = UserProfile()
+            ..name = pData['name'] ?? ''
+            ..role = pData['role'] ?? 'I Need Support'
+            ..age = pData['age'] ?? ''
+            ..autismStatus = pData['autismStatus'] ?? 'No'
+            ..isStudent = pData['isStudent'] ?? false
+            ..studentHighest = pData['studentHighest'] ?? 'Graduate'
+            ..studentStatus = pData['studentStatus'] ?? 'College'
+            ..studentInstitution = pData['studentInstitution'] ?? ''
+            ..studentCourse = pData['studentCourse'] ?? 'B.Tech'
+            ..isEmployee = pData['isEmployee'] ?? false
+            ..employeeCompany = pData['employeeCompany'] ?? ''
+            ..employeeRole = pData['employeeRole'] ?? ''
+            ..employeeSupportDesired = pData['employeeSupportDesired'] ?? 'UNSURE'
+            ..state = pData['state'] ?? 'Kerala'
+            ..pincode = pData['pincode'] ?? ''
+            ..disabilityCertificate = pData['disabilityCertificate'] ?? 'Looking to apply'
+            ..communicationMethod = pData['communicationMethod'] ?? 'Verbal'
+            ..sensorySensitivity = pData['sensorySensitivity'] ?? 'None'
+            ..incomeRange = pData['incomeRange'] ?? 'Below \u20b92.5L'
+            ..targetedPath = pData['targetedPath'] ?? 'Academic grants'
+            ..insuranceNiramaya = pData['insuranceNiramaya'] ?? false
+            ..email = pData['email'] ?? '';
+          final matchedData = latest['result'] ?? {};
+
+          if (mounted) {
+            Navigator.pushReplacementNamed(
+              context,
+              '/dashboard',
+              arguments: {
+                'profile': profile,
+                'matchedData': matchedData,
+              },
+            );
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      print("Failed to fetch history during login: $e");
+    }
+
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, '/role-selection', arguments: fallbackProfile);
     }
   }
 
@@ -93,13 +156,16 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       _isGoogleLoading = true;
     });
 
-    await Future.delayed(const Duration(milliseconds: 1500));
+    final profile = UserProfile()
+      ..name = "Google User"
+      ..email = "google.user@gmail.com";
+
+    await _attemptProfileLogin("google.user@gmail.com", profile);
 
     if (mounted) {
-      final profile = UserProfile()
-        ..name = "Google User"
-        ..email = "google.user@gmail.com";
-      Navigator.pushReplacementNamed(context, '/role-selection', arguments: profile);
+      setState(() {
+        _isGoogleLoading = false;
+      });
     }
   }
 

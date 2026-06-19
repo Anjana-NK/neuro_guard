@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:google_fonts/google_fonts.dart';
+import '../config.dart';
 import '../theme.dart';
 import '../models/user_profile.dart';
 import 'intake_flow.dart';
@@ -8,6 +12,9 @@ class RoleSelectionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    final userProfile = args is UserProfile ? args : UserProfile();
+
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -50,11 +57,11 @@ class RoleSelectionScreen extends StatelessWidget {
                   description: 'Start a personalized self-assessment to discover your custom benefits, accommodations, and action milestones.',
                   icon: Icons.accessibility_new_rounded,
                   onTap: () {
-                    final profile = UserProfile()..role = 'I Need Support';
+                    userProfile.role = 'I Need Support';
                     Navigator.pushNamed(
                       context,
                       '/intake',
-                      arguments: profile,
+                      arguments: userProfile,
                     );
                   },
                 ),
@@ -68,11 +75,11 @@ class RoleSelectionScreen extends StatelessWidget {
                   description: 'Look up support benchmarks, schemes, and custom sensory adjustments on behalf of a dependent or relative.',
                   icon: Icons.favorite_rounded,
                   onTap: () {
-                    final profile = UserProfile()..role = 'Caregiver';
+                    userProfile.role = 'Caregiver';
                     Navigator.pushNamed(
                       context,
                       '/intake',
-                      arguments: profile,
+                      arguments: userProfile,
                     );
                   },
                 ),
@@ -82,24 +89,7 @@ class RoleSelectionScreen extends StatelessWidget {
                 // Login Button for returning users
                 TextButton(
                   onPressed: () {
-                    // Quick mock bypass to dashboard for returning users
-                    final defaultProfile = UserProfile()
-                      ..name = "Demo User"
-                      ..role = "I Need Support"
-                      ..isStudent = true
-                      ..studentInstitution = "CUSAT"
-                      ..studentCourse = "B.Tech"
-                      ..sensorySensitivity = "High"
-                      ..disabilityCertificate = "Obtained"
-                      ..incomeRange = "Below \u20b92.5L"
-                      ..state = "Kerala";
-                    
-                    Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      '/dashboard',
-                      (route) => false,
-                      arguments: defaultProfile,
-                    );
+                    _showReturningUserDialog(context, userProfile.email);
                   },
                   child: Text(
                     'LOGIN AS RETURNING USER',
@@ -120,6 +110,127 @@ class RoleSelectionScreen extends StatelessWidget {
       ),
     );
   }
+
+  void _showReturningUserDialog(BuildContext context, String initialEmail) {
+    final emailController = TextEditingController(text: initialEmail == 'user@example.com' ? '' : initialEmail);
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        bool isDialogLoading = false;
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              backgroundColor: CosmicTheme.primaryBackground,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: Colors.white10)),
+              title: Text('Load Existing Profile', style: GoogleFonts.italiana(color: Colors.white, fontWeight: FontWeight.bold)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text('Enter your registered email address to load your assessment data.', style: TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'serif')),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: emailController,
+                    style: const TextStyle(color: Colors.black87, fontFamily: 'serif'),
+                    decoration: const InputDecoration(
+                      hintText: 'email@example.com',
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  child: const Text('CANCEL', style: TextStyle(color: Colors.white30)),
+                  onPressed: () => Navigator.pop(dialogContext),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: CosmicTheme.accentTeal,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: isDialogLoading ? null : () async {
+                    final email = emailController.text.trim();
+                    if (email.isEmpty) return;
+
+                    setDialogState(() {
+                      isDialogLoading = true;
+                    });
+
+                    final baseUrl = AppConfig.getBaseUrl(context);
+                    try {
+                      final response = await http.get(Uri.parse('$baseUrl/api/history?email=$email'));
+                      if (response.statusCode == 200) {
+                        final body = jsonDecode(response.body);
+                        final history = body['history'] as List?;
+                        if (history != null && history.isNotEmpty) {
+                          final latest = history[0];
+                          final pData = latest['profile'] ?? {};
+                          final profile = UserProfile()
+                            ..name = pData['name'] ?? ''
+                            ..role = pData['role'] ?? 'I Need Support'
+                            ..age = pData['age'] ?? ''
+                            ..autismStatus = pData['autismStatus'] ?? 'No'
+                            ..isStudent = pData['isStudent'] ?? false
+                            ..studentHighest = pData['studentHighest'] ?? 'Graduate'
+                            ..studentStatus = pData['studentStatus'] ?? 'College'
+                            ..studentInstitution = pData['studentInstitution'] ?? ''
+                            ..studentCourse = pData['studentCourse'] ?? 'B.Tech'
+                            ..isEmployee = pData['isEmployee'] ?? false
+                            ..employeeCompany = pData['employeeCompany'] ?? ''
+                            ..employeeRole = pData['employeeRole'] ?? ''
+                            ..employeeSupportDesired = pData['employeeSupportDesired'] ?? 'UNSURE'
+                            ..state = pData['state'] ?? 'Kerala'
+                            ..pincode = pData['pincode'] ?? ''
+                            ..disabilityCertificate = pData['disabilityCertificate'] ?? 'Looking to apply'
+                            ..communicationMethod = pData['communicationMethod'] ?? 'Verbal'
+                            ..sensorySensitivity = pData['sensorySensitivity'] ?? 'None'
+                            ..incomeRange = pData['incomeRange'] ?? 'Below \u20b92.5L'
+                            ..targetedPath = pData['targetedPath'] ?? 'Academic grants'
+                            ..insuranceNiramaya = pData['insuranceNiramaya'] ?? false
+                            ..email = pData['email'] ?? '';
+                          final matchedData = latest['result'] ?? {};
+
+                          if (context.mounted) {
+                            Navigator.pop(dialogContext);
+                            Navigator.pushNamedAndRemoveUntil(
+                              context,
+                              '/dashboard',
+                              (route) => false,
+                              arguments: {
+                                'profile': profile,
+                                'matchedData': matchedData,
+                              },
+                            );
+                          }
+                          return;
+                        }
+                      }
+                    } catch (e) {
+                      print("Error fetching profile: $e");
+                    }
+
+                    if (dialogContext.mounted) {
+                      setDialogState(() {
+                        isDialogLoading = false;
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('No profile assessment history found for this email.')),
+                      );
+                    }
+                  },
+                  child: isDialogLoading
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.white)))
+                      : const Text('LOAD'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
 
   Widget _buildRoleOptionCard({
     required BuildContext context,

@@ -22,6 +22,9 @@ def get_assessment_history():
             data["id"] = doc.id
             history_list.append(data)
             
+        # Sort by timestamp descending
+        history_list.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            
         return jsonify({
             "status": "success",
             "history": history_list

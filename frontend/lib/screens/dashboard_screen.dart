@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../models/user_profile.dart';
 import '../config.dart';
+import '../services/tts_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -29,6 +30,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   bool _isRagLoading = false;
   String _ragAnswer = "";
   List<dynamic> _ragSources = [];
+
+  // Chatbot State
+  final List<Map<String, String>> _chatMessages = [];
+  bool _isChatLoading = false;
+  final TextEditingController _chatController = TextEditingController();
+  final ScrollController _chatScrollController = ScrollController();
 
   // Nearby Centers State
   List<dynamic> _nearbyCenters = [];
@@ -69,6 +76,14 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         ];
       }
 
+      // Initialize Chatbot welcome message
+      if (_chatMessages.isEmpty) {
+        _chatMessages.add({
+          'sender': 'bot',
+          'text': 'Hello ${_profile.name.isNotEmpty ? _profile.name : "there"}! I am your Neuro Guard Assistant. I can help you understand government benefits, accommodations, and sensory adjustments tailored to your profile. Ask me anything!'
+        });
+      }
+
       // Fetch nearby centers
       _fetchNearbyCenters();
 
@@ -79,6 +94,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   @override
   void dispose() {
     _ragSearchController.dispose();
+    _chatController.dispose();
+    _chatScrollController.dispose();
     super.dispose();
   }
 
@@ -204,13 +221,187 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     // Execute queries
     if (cmd.contains("explain niramaya") || cmd.contains("നിരാമയ വിശദീകരിക്കുക") || cmd.contains("निरामय समझाएं") || cmd.contains("நிராமயா விளக்கு")) {
       setState(() => _selectedTabIndex = 2);
-      _ragSearchController.text = "Explain Niramaya Health Insurance Scheme guidelines";
-      _queryRAG("Explain Niramaya Health Insurance Scheme guidelines");
+      _sendChatMessage("Explain Niramaya Health Insurance Scheme guidelines");
     } else if (cmd.contains("explain udid") || cmd.contains("സ്വവലംബൻ") || cmd.contains("यूडीआईडी")) {
       setState(() => _selectedTabIndex = 2);
-      _ragSearchController.text = "How to apply for Swavlamban UDID card";
-      _queryRAG("How to apply for Swavlamban UDID card");
+      _sendChatMessage("How to apply for Swavlamban UDID card");
     }
+  }
+
+  Future<void> _sendChatMessage(String text) async {
+    if (text.trim().isEmpty) return;
+    
+    setState(() {
+      _chatMessages.add({
+        'sender': 'user',
+        'text': text.trim(),
+      });
+      _isChatLoading = true;
+    });
+    
+    _chatController.clear();
+    
+    // Scroll to bottom
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_chatScrollController.hasClients) {
+        _chatScrollController.animateTo(
+          _chatScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
+    final baseUrl = AppConfig.getBaseUrl(context);
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/chat'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'message': text,
+          'profile': _profile.toJson()
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final reply = body['reply'] as String? ?? "No reply received.";
+        setState(() {
+          _chatMessages.add({
+            'sender': 'bot',
+            'text': reply,
+          });
+          _isChatLoading = false;
+        });
+      } else {
+        setState(() {
+          _chatMessages.add({
+            'sender': 'bot',
+            'text': 'Sorry, I encountered an error communicating with the chat server (code ${response.statusCode}).',
+          });
+          _isChatLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _chatMessages.add({
+          'sender': 'bot',
+          'text': 'Failed to reach the chatbot server. Please check your network connection.',
+        });
+        _isChatLoading = false;
+      });
+    }
+
+    // Scroll to bottom again
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_chatScrollController.hasClients) {
+        _chatScrollController.animateTo(
+          _chatScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _showSchemesModal(List benefits) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.75,
+          decoration: const BoxDecoration(
+            color: CosmicTheme.primaryBackground,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(24),
+              topRight: Radius.circular(24),
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 12),
+                height: 4,
+                width: 40,
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Matched Support Schemes', style: GoogleFonts.italiana(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(ctx),
+                    )
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white12),
+              Expanded(
+                child: benefits.isEmpty
+                    ? Center(child: _buildFallbackCard("No matching schemes found."))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(20),
+                        itemCount: benefits.length,
+                        itemBuilder: (c, idx) {
+                          final item = benefits[idx];
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 14),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.04),
+                              border: Border.all(color: Colors.white10),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: CosmicTheme.gradientMid,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        item['badge'] ?? 'Scheme',
+                                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                    Text(
+                                      item['authority'] ?? '',
+                                      style: const TextStyle(color: Colors.white38, fontSize: 11, fontFamily: 'serif'),
+                                    )
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  item['title'] ?? '',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15, fontFamily: 'serif'),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  item['description'] ?? '',
+                                  style: const TextStyle(color: Colors.white54, fontSize: 12, height: 1.3, fontFamily: 'serif'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   // --- Checklist state syncing back to Firestore ---
@@ -444,8 +635,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           onTap: () => setState(() => _selectedTabIndex = 1),
         ),
         _buildGridButton(
-          title: 'RAG Search',
-          icon: Icons.search_rounded,
+          title: 'AI Chatbot',
+          icon: Icons.forum_rounded,
           color: CosmicTheme.accentTeal,
           onTap: () => setState(() => _selectedTabIndex = 2),
         ),
@@ -720,39 +911,158 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  // ================= TAB 2: RAG SEARCH & SCHEMES =================
   Widget _buildRAGSearchTab() {
     final benefits = _matchedData != null && _matchedData!['benefits'] != null
         ? (_matchedData!['benefits'] as List)
         : [];
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // RAG Search Area
-          Text('RAG Support Knowledge Base', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17)),
-          const SizedBox(height: 8),
-          const Text(
-            'Ask queries about disability pensions, CBSE exam concessions, Niramaya insurance, or corporate rights.',
-            style: TextStyle(color: Colors.white54, fontSize: 12, fontFamily: 'serif'),
+    return Column(
+      children: [
+        // Chat Header with Action Buttons
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AI Support Chatbot',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white, fontFamily: 'serif'),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Profile-aware guidance & accommodations',
+                      style: TextStyle(fontSize: 11, color: Colors.white54, fontFamily: 'serif'),
+                    ),
+                  ],
+                ),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: CosmicTheme.accentTeal,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.list_alt_rounded, size: 16),
+                label: const Text('SCHEMES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                onPressed: () => _showSchemesModal(benefits),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          Row(
+        ),
+        const Divider(height: 1, color: Colors.white12),
+
+        // Chat Messages List
+        Expanded(
+          child: ListView.builder(
+            controller: _chatScrollController,
+            padding: const EdgeInsets.all(20),
+            itemCount: _chatMessages.length + (_isChatLoading ? 1 : 0),
+            itemBuilder: (ctx, idx) {
+              if (idx == _chatMessages.length) {
+                // Loading indicator bubble
+                return Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 12, right: 60),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.04),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(16),
+                        topRight: Radius.circular(16),
+                        bottomRight: Radius.circular(16),
+                      ),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(CosmicTheme.accentTeal),
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              final msg = _chatMessages[idx];
+              final isBot = msg['sender'] == 'bot';
+              final bubbleColor = isBot ? Colors.white.withOpacity(0.05) : CosmicTheme.accentTeal.withOpacity(0.15);
+              final borderColor = isBot ? Colors.white.withOpacity(0.08) : CosmicTheme.accentTeal.withOpacity(0.3);
+              final textStyle = TextStyle(
+                color: isBot ? Colors.white.withOpacity(0.9) : Colors.white,
+                fontSize: 13.5,
+                height: 1.4,
+                fontFamily: 'serif',
+              );
+
+              return Align(
+                alignment: isBot ? Alignment.centerLeft : Alignment.centerRight,
+                child: Container(
+                  margin: EdgeInsets.only(
+                    bottom: 12,
+                    left: isBot ? 0 : 60,
+                    right: isBot ? 60 : 0,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: bubbleColor,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(16),
+                      topRight: const Radius.circular(16),
+                      bottomLeft: isBot ? Radius.zero : const Radius.circular(16),
+                      bottomRight: isBot ? const Radius.circular(16) : Radius.zero,
+                    ),
+                    border: Border.all(color: borderColor),
+                  ),
+                  child: Text(msg['text'] ?? '', style: textStyle),
+                ),
+              );
+            },
+          ),
+        ),
+
+        // Quick Suggestion Chips
+        Container(
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 12.0),
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              _buildChatSuggestionChip("Explain Niramaya Insurance"),
+              _buildChatSuggestionChip("How to get UDID card"),
+              _buildChatSuggestionChip("CBSE Concessions"),
+              _buildChatSuggestionChip("Corporate Accommodations"),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Chat Input Row
+        Padding(
+          padding: const EdgeInsets.only(left: 20.0, right: 20.0, bottom: 20.0, top: 4.0),
+          child: Row(
             children: [
               Expanded(
                 child: TextField(
-                  controller: _ragSearchController,
+                  controller: _chatController,
                   style: const TextStyle(color: Colors.black87, fontFamily: 'serif'),
                   decoration: const InputDecoration(
-                    hintText: 'e.g. CBSE extra time guidelines...',
+                    hintText: 'Ask Neuro Guard a question...',
+                    contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                   ),
+                  onSubmitted: _sendChatMessage,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               GestureDetector(
-                onTap: () => _queryRAG(_ragSearchController.text),
+                onTap: () => _sendChatMessage(_chatController.text),
                 child: Container(
                   height: 52,
                   width: 52,
@@ -760,109 +1070,26 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     color: CosmicTheme.accentTeal,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.search_rounded, color: Colors.white),
+                  child: const Icon(Icons.send_rounded, color: Colors.white),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+        ),
+      ],
+    );
+  }
 
-          // RAG Output Card
-          if (_isRagLoading)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(16.0),
-                child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(CosmicTheme.accentTeal)),
-              ),
-            )
-          else if (_ragAnswer.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: const [
-                      Icon(Icons.auto_awesome_rounded, color: CosmicTheme.accentTeal, size: 20),
-                      SizedBox(width: 8),
-                      Text('AI Contextual Answer', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontFamily: 'serif')),
-                    ],
-                  ),
-                  const Divider(height: 24, color: Colors.white12),
-                  Text(
-                    _ragAnswer,
-                    style: const TextStyle(color: Colors.white70, height: 1.4, fontSize: 13, fontFamily: 'serif'),
-                  ),
-                  if (_ragSources.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      'Sources: ${_ragSources.join(", ")}',
-                      style: const TextStyle(color: CosmicTheme.accentAmber, fontStyle: FontStyle.italic, fontSize: 11, fontFamily: 'serif'),
-                    ),
-                  ]
-                ],
-              ),
-            ),
-          const SizedBox(height: 28),
-
-          // Core Schemes List
-          Text('Matched Support Schemes', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17)),
-          const SizedBox(height: 12),
-          if (benefits.isEmpty)
-            _buildFallbackCard("No matching schemes found.")
-          else
-            ...benefits.map((item) {
-              return Container(
-                margin: const EdgeInsets.only(bottom: 14),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.04),
-                  border: Border.all(color: Colors.white10),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: CosmicTheme.gradientMid,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            item['badge'] ?? 'Scheme',
-                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        Text(
-                          item['authority'] ?? '',
-                          style: const TextStyle(color: Colors.white38, fontSize: 11, fontFamily: 'serif'),
-                        )
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      item['title'] ?? '',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15, fontFamily: 'serif'),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      item['description'] ?? '',
-                      style: const TextStyle(color: Colors.white54, fontSize: 12, height: 1.3, fontFamily: 'serif'),
-                    ),
-                  ],
-                ),
-              );
-            }).toList()
-        ],
+  Widget _buildChatSuggestionChip(String query) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8.0),
+      child: ActionChip(
+        backgroundColor: const Color(0xFF203A43),
+        surfaceTintColor: Colors.transparent,
+        side: const BorderSide(color: CosmicTheme.accentTeal, width: 1.0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        label: Text(query, style: const TextStyle(fontSize: 11, fontFamily: 'serif', color: Colors.white)),
+        onPressed: () => _sendChatMessage(query),
       ),
     );
   }
@@ -1242,7 +1469,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.home_filled), label: 'Home'),
         BottomNavigationBarItem(icon: Icon(Icons.analytics_outlined), label: 'Analysis'),
-        BottomNavigationBarItem(icon: Icon(Icons.search_rounded), label: 'RAG Search'),
+        BottomNavigationBarItem(icon: Icon(Icons.forum_rounded), label: 'AI Chatbot'),
         BottomNavigationBarItem(icon: Icon(Icons.location_on_outlined), label: 'Centers'),
         BottomNavigationBarItem(icon: Icon(Icons.account_circle_rounded), label: 'Profile'),
       ],
@@ -1419,6 +1646,7 @@ class _VoiceAssistantDrawerState extends State<VoiceAssistantDrawer> with Single
   @override
   void dispose() {
     _waveformController.dispose();
+    TtsService.stop();
     super.dispose();
   }
 
@@ -1460,10 +1688,17 @@ class _VoiceAssistantDrawerState extends State<VoiceAssistantDrawer> with Single
       _isSpeaking = true;
     });
 
-    // Simulate speech playback
-    await Future.delayed(const Duration(milliseconds: 2500));
+    // Speak using TTS service
+    await TtsService.speak(reply, _activeLanguage);
+
+    // Simulate speech playback delay before completing navigation
+    await Future.delayed(const Duration(milliseconds: 3000));
     
     if (mounted) {
+      setState(() {
+        _isSpeaking = false;
+        _assistantStatus = "Listening...";
+      });
       Navigator.pop(context, text); // Send command back to dashboard screen
     }
   }

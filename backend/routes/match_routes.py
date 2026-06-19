@@ -26,11 +26,13 @@ def match():
         data
     )
 
+    import datetime
     db.collection(
         "assessments"
     ).add({
         "profile": data,
-        "result": result
+        "result": result,
+        "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     })
 
     return jsonify(
